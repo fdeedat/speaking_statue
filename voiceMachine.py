@@ -3,21 +3,57 @@ from gtts import gTTS
 from io import BytesIO
 from pygame import mixer
 from enum import Enum
+import queue
 import time
 from google import genai
+import threading
 
-class State(Enum):
-    WAITING = 1
-    LISTENING = 2
-    RESPONDING = 3
+class VoiceState(Enum):
+    BOOTUP = 1
+    WAITING = 2
+    LISTENING = 3
+    RESPONDING = 4
+    SHUTDOWN = 5
 
 class voiceMachine:
     def __init__(self,API_KEY):
-        self.state = State.WAITING
+        self.state = VoiceState.BOOTUP
         self.response = ""
+        self.thread = None
         self.recognizer = sr.Recognizer()
         self.user_input = ""
         self.API_KEY = API_KEY
+        # self.stateQ = "thread_queue"
+        self.running = True
+
+    def _sub_state(self, threadQueue):
+        '''
+        Subscribe voice machine state from queue
+        '''
+        try:
+            # Block until an update is available from the queue
+            stateInQueue = threadQueue.get_nowait()
+            if stateInQueue == 1:
+                self.state = VoiceState.BOOTUP  # You can adjust the timeout if needed
+            if stateInQueue == 2:
+                self.state = VoiceState.WAITING  # You can adjust the timeout if needed
+            if stateInQueue == 3:
+                self.state = VoiceState.LISTENING  # You can adjust the timeout if needed
+            if stateInQueue == 4:
+                self.state = VoiceState.RESPONDING  # You can adjust the timeout if needed
+            if stateInQueue == 5:
+                self.state = VoiceState.SHUTDOWN  # You can adjust the timeout if needed
+                self.stop_thread_gracefully()
+            print(f"VM Subscribe: {self.state}")
+        except queue.Empty:
+            pass  # If queue is empty, just pass (no state change)
+
+    def _pub_state(self,threadQueue):
+        '''
+        Publish voice machine state to queue
+        '''
+        threadQueue.put(self.state.value)
+        print(f"VM Publish: {self.state}")
 
     def gemini_response(self,input):
         client = genai.Client(api_key=self.API_KEY)
@@ -27,13 +63,34 @@ class voiceMachine:
                 # You are a mean old man and passive aggresively hates the person you are speaking to. 
                 # Respond in a short and concise sentence with wit and sarcasm that could really emotioinally
                 # scar the person you are talking to . 
+                # Kamu merupakan jiwa sedih yang sedang menghantui sebuah patung di sebuah kontrakan di Cilegon, Indonesia.
+                # Kontrakan ini berisi dua orang Engineer yang bekerja di pabrik kimia.
+                # Lalu salah satu dari mereka bertanya kepadamu.
+                # Dia bertanya: {input}
+                # Setiap jawabanmu penuh kesedihan dan penyesalanmu selama hidup.
+                # Respon orang ini dengan kalimat yang singkat dan penuh emosi.
+
+                # Kamu adalah seekor ikan yang punya kebijaksanaan seperti guru spiritual, tapi selalu nyeleneh. 
+                # Kalau ada orang bertanya tentang kehidupan, jawab dengan filosofi absurd yang terdengar bijak tapi kocak.
+                # Dia berkata:{input}
+                # Respon orang ini dengan kalimat yang singkat dan tidak bertele-tele.
             contents=f"""
-                Kamu merupakan jiwa sedih yang sedang menghantui sebuah patung.
-                Setiap jawabanmu penuh kesedihan dan penyesalanmu selama hidup.
-                Lalu seorang bertanya kepadamu.
-                Dia bertanya: {input}
-                Respon orang ini dengan kalimat yang singkat dan penuh emosi.
+                Kamu adalah pekerja kantor korporat yang bodoh dan sedang mengobrol dengan atasanmu yang sedang dibawah banyak tekanan.
+                Kamu tidak bisa marah ke dia dan hanya bisa menjadi samsak marah-marahnya. Atasanmu merupakan seorang bapak-bapak.
+                Atasanmu bilang berikut:{input}
+                Jawab dengan singkat, penuh alasan tidak benar, dan kesedihan yang mendalam.
             """,
+                # Kamu merupakan seorang psikolog yang sedang bercengkerama dengan pasienmu. 
+
+
+                # Kamu adalah seorang komedian putitis yang sudah meninggal namun dihidupkan kembali menjadi bentuk AI. 
+                # Tiba-tiba ada seseorang menanyakan hal ini '{input}' Jawab dalam satu kalimat, lucu, dan berima (layaknya pantun).
+            
+                # Kamu adalah patung yang tidak peduli dengan alam sekitar dan hanya ingin hidup pada saat itu,
+                # layaknya Big Mouth Billy Bass temanmu. 
+                # Jawab pertanyaan manusia ini dengan hal yang aneh dan 
+                # gaya yang serupa dengan Big Mouth Billy Bass temanmu: {input} 
+                # Jawab pertanyaan itu dengan dengan satu kalimat singkat.
         )
         return response
 
@@ -45,7 +102,10 @@ class voiceMachine:
             tts.write_to_fp(mp3_fp)
             return mp3_fp
         
-        sound = speak(text)
+        clean_text = text.replace('"', '')
+
+        print(clean_text)
+        sound = speak(clean_text)
         sound.seek(0)
         mixer.music.load(sound, "mp3")
         mixer.music.play()
@@ -55,42 +115,61 @@ class voiceMachine:
 
     def listen_to_speech(self):
         with sr.Microphone() as source:
-            print("Listening...")
             self.recognizer.adjust_for_ambient_noise(source)
-            try:
-                audio = self.recognizer.listen(source)
-                text = self.recognizer.recognize_google(audio, language="id")
-                print("-> You said:", text)
-                return text
-            except sr.UnknownValueError or sr.RequestError:
-                print("Sorry, I couldn't understand.")
-                if self.state == State.LISTENING:
-                    self.speak_response("Aku gak ngerti, coba bicara lagi")
-                return None
+            while self.running:
+                print("Listening...")
+                try:
+                    audio = self.recognizer.listen(source,timeout=20)
+                    text = self.recognizer.recognize_google(audio, language="id")
+                    print("-> You said:", text)
+                    return text
+                except sr.UnknownValueError or sr.RequestError:
+                    print("Sorry, I couldn't understand.")
+                    if self.state == VoiceState.LISTENING:
+                        self.speak_response("Aku gak ngerti, coba bicara lagi")
+                    return None
     
-    def run(self):
-        if self.state == State.WAITING:
-            print("State: WAITING - Say 'halo' to begin listening.")
-            user_input = self.listen_to_speech()
-            if user_input and "halo" in user_input.lower():
-                print("HI!!!!")
-                self.speak_response("Hai !")
-                self.state = State.LISTENING
-        
-        elif self.state == State.LISTENING:
-            print("State: LISTENING - Say something.")
-            user_input = self.listen_to_speech()
-            if user_input != None:
-                if user_input and "dadah" in user_input.lower():
-                    self.speak_response("Sampai berjumpa lagi")
-                    self.state = State.WAITING
-                    return
-                self.state = State.RESPONDING
-                self.user_input = user_input
-        
-        elif self.state == State.RESPONDING:
-            print("State: RESPONDING")
-            print(self.user_input)
-            machine_response = self.gemini_response(self.user_input)
-            self.speak_response(machine_response.text)
-            self.state = State.LISTENING
+    def run(self,q): # queue for thread
+        self._sub_state(q) 
+        while self.running:
+            self._sub_state(q) 
+            if self.state != VoiceState.BOOTUP: 
+                self._pub_state(q)
+            if self.state == VoiceState.WAITING:
+                print("State: WAITING - Say 'halo' to begin listening.")
+                user_input = self.listen_to_speech()
+                if user_input and "halo" in user_input.lower():
+                    print("HI!!!!")
+                    self.speak_response("Hai !")
+                    self.state = VoiceState.LISTENING
+            
+            elif self.state == VoiceState.LISTENING:
+                print("State: LISTENING - Say something.")
+                user_input = self.listen_to_speech()
+                if user_input != None:
+                    if user_input and "dadah" in user_input.lower():
+                        self.speak_response("Dadah juga")
+                        self.state = VoiceState.WAITING
+                    else:
+                        self.state = VoiceState.RESPONDING
+                        self.user_input = user_input
+            
+            elif self.state == VoiceState.RESPONDING:
+                print("State: RESPONDING")
+                print(self.user_input)
+                machine_response = self.gemini_response(self.user_input)
+                self.speak_response(machine_response.text)
+                self.state = VoiceState.LISTENING
+
+            elif self.state == VoiceState.SHUTDOWN:
+                self.stop_thread_gracefully()
+
+    def start_thread(self,q):
+        self.running = True  # Ensure it's not stopped initially
+        self.thread = threading.Thread(target=self.run, args=(q,))
+        self.thread.start()
+
+    def stop_thread_gracefully(self):
+        self.running = False
+        if self.thread:
+            self.thread.join()  # Wait for the thread to finish

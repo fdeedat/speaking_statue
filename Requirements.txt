@@ -1,0 +1,11 @@
+SpeechRecognition== 3.14.1
+gTTS 
+pygame == 2.6.1
+PyAudio == 0.2.14
+python-dotenv == 1.0.1
+numpy
+opencv_python
+pygame
+pysubs2
+PyAudio
+pyvidplayer2

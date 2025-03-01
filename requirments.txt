@@ -1,5 +1,0 @@
-SpeechRecognition== 3.14.1
-gTTS == 3.4.1
-pygame == 2.6.1
-PyAudio == 0.2.14
-python-dotenv == 1.0.1
