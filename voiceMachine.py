@@ -19,12 +19,14 @@ class voiceMachine:
     def __init__(self,API_KEY):
         self.state = VoiceState.BOOTUP
         self.response = ""
-        self.thread = None
         self.recognizer = sr.Recognizer()
         self.user_input = ""
         self.API_KEY = API_KEY
-        # self.stateQ = "thread_queue"
         self.running = True
+
+        # self.event = threading.Event()
+        self.stop_event = threading.Event()
+        self.thread = None
 
     def _sub_state(self, threadQueue):
         '''
@@ -33,6 +35,7 @@ class voiceMachine:
         try:
             # Block until an update is available from the queue
             stateInQueue = threadQueue.get_nowait()
+            print(f"VM Subscribe: {self.state}")
             if stateInQueue == 1:
                 self.state = VoiceState.BOOTUP  # You can adjust the timeout if needed
             if stateInQueue == 2:
@@ -44,7 +47,6 @@ class voiceMachine:
             if stateInQueue == 5:
                 self.state = VoiceState.SHUTDOWN  # You can adjust the timeout if needed
                 self.stop_thread_gracefully()
-            print(f"VM Subscribe: {self.state}")
         except queue.Empty:
             pass  # If queue is empty, just pass (no state change)
 
@@ -113,27 +115,36 @@ class voiceMachine:
         while mixer.music.get_busy():
             time.sleep(0.1)
 
-    def listen_to_speech(self):
+    def listen_to_speech(self,q):
+        self._sub_state(q)
         with sr.Microphone() as source:
             self.recognizer.adjust_for_ambient_noise(source)
             while self.running:
+                self._sub_state(q)
+                print(self.state)
                 print("Listening...")
                 try:
-                    audio = self.recognizer.listen(source,timeout=20)
-                    text = self.recognizer.recognize_google(audio, language="id")
-                    print("-> You said:", text)
-                    return text
+                    if self.state != VoiceState.SHUTDOWN:
+                        audio = self.recognizer.listen(source,timeout=20)
+                        self._sub_state(q)
+                        text = self.recognizer.recognize_google(audio, language="id")
+                        print("-> You said:", text)
+                        return text
+                    else:
+                        self.stop_thread_gracefully()
                 except sr.UnknownValueError or sr.RequestError:
                     print("Sorry, I couldn't understand.")
                     if self.state == VoiceState.LISTENING:
                         self.speak_response("Aku gak ngerti, coba bicara lagi")
+                        self._sub_state(q)
                     return None
     
     def run(self,q): # queue for thread
         self._sub_state(q) 
-        while self.running:
+        while self.running and not self.stop_event.is_set():
             self._sub_state(q) 
-            if self.state != VoiceState.BOOTUP: 
+            print("VM current State:",{self.state})
+            if self.state != VoiceState.BOOTUP and self.state != VoiceState.LISTENING: 
                 self._pub_state(q)
             if self.state == VoiceState.WAITING:
                 print("State: WAITING - Say 'halo' to begin listening.")
@@ -145,7 +156,9 @@ class voiceMachine:
             
             elif self.state == VoiceState.LISTENING:
                 print("State: LISTENING - Say something.")
-                user_input = self.listen_to_speech()
+                user_input = self.listen_to_speech(q) #this is running sequentially and slowly
+                # if self.state == VoiceState.SHUTDOWN:
+                #     self.stop_thread_gracefully()
                 if user_input != None:
                     if user_input and "dadah" in user_input.lower():
                         self.speak_response("Dadah juga")
@@ -161,8 +174,9 @@ class voiceMachine:
                 self.speak_response(machine_response.text)
                 self.state = VoiceState.LISTENING
 
-            elif self.state == VoiceState.SHUTDOWN:
+            if self.state == VoiceState.SHUTDOWN:
                 self.stop_thread_gracefully()
+        # self.thread.join()
 
     def start_thread(self,q):
         self.running = True  # Ensure it's not stopped initially
@@ -171,5 +185,6 @@ class voiceMachine:
 
     def stop_thread_gracefully(self):
         self.running = False
-        if self.thread:
-            self.thread.join()  # Wait for the thread to finish
+        self.stop_event.set()
+        # self.thread.join()  # Wait for the thread to finish
+        # if self.thread:

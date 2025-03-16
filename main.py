@@ -96,11 +96,11 @@ class Game:
         Publish voice machine state to queue
         '''
         threadQueue.put(self.state.value)
-        print(f"Publish: {self.state}")
+        print(f"Publish: {self.state}, {self.state.value}")
 
     def run(self,q):
-        interval = 0.1
-        last_time = time.time()
+        # interval = 0.01
+        # last_time = time.time()
         while self.running:
             self.screen.fill((255, 255, 255))  # Clear screen with white background
             
@@ -121,36 +121,15 @@ class Game:
                     self._pub_state(q)
 
             else:
-                current_time = time.time()
-                if current_time - last_time >= interval:
-                    self._sub_state(q)
-                    last_time = current_time
-                # self._sub_state(q)
-                # if self.state == GameState.WAITING:
-                #     self._pub_state(q) 
-                #     # print("State: WAITING - Say 'halo' to begin listening.")
-                #     # if self.user_input and "halo" in self.user_input.lower():
-                #     #     self.gameState = GameState.LISTENING
-                #         # self.user_input = user_input
-
-                # if self.state == GameState.LISTENING:
-                #     # self._pub_state(q) 
-                #     # print("State: LISTENING - Say 'halo' to begin listening.")
-                #     # # user_input = self.voiceMachine.listen_to_speech()
-                #     # if self.user_input and "halo" in self.user_input.lower():
-                #     #     self.gameState = GameState.RESPONDING
-                #         # self.user_input = user_input
-
-                #         # self.sadman.updateState(self.gameState)
-                #         # self.sadman.update(self.screen)
-                        
-                # if self.state == GameState.RESPONDING:
-                #     # print("State: RESPONDING - Say 'halo' to begin listening.")
-                #     # machine_response = self.voiceMachine.gemini_response(self.user_input)
-                #     # self.voiceMachine.speak_response(machine_response.text)
-                #     # self.state = GameState.LISTENING
-
+                # self.state = GameState.SHUTDOWN
                 # self._pub_state(q)
+                if self.state != GameState.SHUTDOWN:
+                    self._sub_state(q)
+                    print(self.state)
+                # current_time = time.time()
+                # if current_time - last_time >= interval:
+                #     self._sub_state(q)
+                #     last_time = current_time
                 self.sadman.updateState(self.state)
                 self.sadman.update(self.screen)
             pygame.display.flip()
